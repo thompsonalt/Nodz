@@ -93,6 +93,8 @@ class Nodz(QtWidgets.QGraphicsView):
         Initialize tablet zoom, drag canvas and the selection.
 
         """
+        super(Nodz, self).mousePressEvent(event)
+        
         # Tablet zoom
         if (event.button() == QtCore.Qt.RightButton and
             event.modifiers() == QtCore.Qt.AltModifier):
@@ -156,8 +158,6 @@ class Nodz(QtWidgets.QGraphicsView):
 
         else:
             self.currentState = 'DEFAULT'
-
-        super(Nodz, self).mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         """
@@ -289,20 +289,23 @@ class Nodz(QtWidgets.QGraphicsView):
         F - Focus view on the selection
 
         """
-        if event.key() not in self.pressedKeys:
-            self.pressedKeys.append(event.key())
+        super(Nodz, self).keyPressEvent(event)
 
-        if event.key() in (QtCore.Qt.Key_Delete, QtCore.Qt.Key_Backspace):
-            self._deleteSelectedNodes()
+        if self.scene().focusItem() is None:
+            if event.key() not in self.pressedKeys:
+                self.pressedKeys.append(event.key())
 
-        if event.key() == QtCore.Qt.Key_F:
-            self._focus()
+            if event.key() in (QtCore.Qt.Key_Delete, QtCore.Qt.Key_Backspace):
+                self._deleteSelectedNodes()
 
-        if event.key() == QtCore.Qt.Key_S:
-            self._nodeSnap = True
+            if event.key() == QtCore.Qt.Key_F:
+                self._focus()
 
-        # Emit signal.
-        self.signal_KeyPressed.emit(event.key())
+            if event.key() == QtCore.Qt.Key_S:
+                self._nodeSnap = True
+
+            # Emit signal.
+            self.signal_KeyPressed.emit(event.key())
 
     def keyReleaseEvent(self, event):
         """
@@ -508,7 +511,7 @@ class Nodz(QtWidgets.QGraphicsView):
         else:
             nodeItem = NodeItem(name=name, alternate=alternate, preset=preset,
                                 config=self.config)
-
+            
             # Store node in scene.
             self.scene().nodes[name] = nodeItem
 
@@ -594,7 +597,7 @@ class Nodz(QtWidgets.QGraphicsView):
 
 
     # ATTRS
-    def createAttribute(self, node, name='default', index=-1, preset='attr_default', plug=True, socket=True, dataType=None, plugMaxConnections=-1, socketMaxConnections=1):
+    def createAttribute(self, node, widget, name='default', index=-1, preset='attr_default', plug=True, socket=True, dataType=None, plugMaxConnections=-1, socketMaxConnections=1):
         """
         Create a new attribute with a given name.
 
@@ -641,7 +644,7 @@ class Nodz(QtWidgets.QGraphicsView):
             print('Attribute creation aborted !')
             return
 
-        node._createAttribute(name=name, index=index, preset=preset, plug=plug, socket=socket, dataType=dataType, plugMaxConnections=plugMaxConnections, socketMaxConnections=socketMaxConnections)
+        node._createAttribute(name=name, widget=widget, index=index, preset=preset, plug=plug, socket=socket, dataType=dataType, plugMaxConnections=plugMaxConnections, socketMaxConnections=socketMaxConnections)
 
         # Emit signal.
         self.signal_AttrCreated.emit(node.name, index)
@@ -1115,7 +1118,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
         """
         if self.attrCount > 0:
             return (self.baseHeight +
-                    self.attrHeight * self.attrCount +
+                    sum(self.attrsData[attr]['height'] for attr in self.attrs) +
                     self.border +
                     0.5 * self.radius)
         else:
@@ -1140,11 +1143,13 @@ class NodeItem(QtWidgets.QGraphicsItem):
         self.setAcceptHoverEvents(True)
         self.setFlag(QtWidgets.QGraphicsItem.ItemIsMovable)
         self.setFlag(QtWidgets.QGraphicsItem.ItemIsSelectable)
+        self.setFlag(QtWidgets.QGraphicsItem.ItemIsFocusable)
 
         # Dimensions.
         self.baseWidth  = config['node_width']
         self.baseHeight = config['node_height']
         self.attrHeight = config['node_attr_height']
+        self.slotWidth = config['node_slot_width']
         self.border = config['node_border']
         self.radius = config['node_radius']
 
@@ -1182,7 +1187,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
         self._attrPen = QtGui.QPen()
         self._attrPen.setStyle(QtCore.Qt.SolidLine)
 
-    def _createAttribute(self, name, index, preset, plug, socket, dataType, plugMaxConnections, socketMaxConnections):
+    def _createAttribute(self, name, widget, index, preset, plug, socket, dataType, plugMaxConnections, socketMaxConnections):
         """
         Create an attribute by expanding the node, adding a label and
         connection items.
@@ -1242,6 +1247,11 @@ class NodeItem(QtWidgets.QGraphicsItem):
 
         self.attrCount += 1
 
+        widget_proxy = self.scene().addWidget(widget)
+        widget_proxy.setParentItem(self)
+
+        widget_height = widget_proxy.geometry().height()
+
         # Add the attribute based on its index.
         if index == -1 or index > self.attrCount:
             self.attrs.append(name)
@@ -1255,8 +1265,18 @@ class NodeItem(QtWidgets.QGraphicsItem):
                                 'preset': preset,
                                 'dataType': dataType,
                                 'plugMaxConnections': plugMaxConnections,
-                                'socketMaxConnections': socketMaxConnections
+                                'socketMaxConnections': socketMaxConnections,
+                                'height' : widget_height
                                 }
+
+        # Get y position
+        top = 0
+        for attr in self.attrs:
+            if attr == name: break
+            top += self.attrsData[attr]['height']
+
+        widget_proxy.setPos(self.border, self.radius + self.border*2 + top)
+        widget_proxy.resize(self.baseWidth - self.border*2, widget_height)
 
         # Update node height.
         self.update()
@@ -1384,7 +1404,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
             rect = QtCore.QRect(self.border / 2,
                                 self.baseHeight - self.radius + offset,
                                 self.baseWidth - self.border,
-                                self.attrHeight)
+                                self.attrsData[attr]['height'])
 
 
 
@@ -1402,7 +1422,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
             self._attrPen.setColor(utils._convertDataToColor([0, 0, 0, 0]))
             painter.setPen(self._attrPen)
             painter.setBrush(self._attrBrush)
-            if (offset / self.attrHeight) % 2:
+            if (offset / self.attrsData[attr]['height']) % 2:
                 painter.setBrush(self._attrBrushAlt)
 
             painter.drawRect(rect)
@@ -1426,7 +1446,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
                                      rect.height())
             painter.drawText(textRect, QtCore.Qt.AlignVCenter, name)
 
-            offset += self.attrHeight
+            offset += self.attrsData[attr]['height']
 
     def mousePressEvent(self, event):
         """
@@ -1736,7 +1756,7 @@ class PlugItem(SlotItem):
         super(PlugItem, self).__init__(parent, attribute, preset, index, dataType, maxConnections)
 
         # Storage.
-        self.attributte = attribute
+        self.attribute = attribute
         self.preset = preset
         self.slotType = 'plug'
 
@@ -1758,15 +1778,22 @@ class PlugItem(SlotItem):
         The bounding rect based on the width and height variables.
 
         """
-        width = height = self.parentItem().attrHeight / 2.0
+        width = height = self.parentItem().slotWidth
 
         nodzInst = self.scene().views()[0]
         config = nodzInst.config
 
         x = self.parentItem().baseWidth - (width / 2.0)
-        y = (self.parentItem().baseHeight - config['node_radius'] +
-             self.parentItem().attrHeight / 4 +
-             self.parentItem().attrs.index(self.attribute) * self.parentItem().attrHeight)
+
+        y = 0
+        for attr in self.parentItem().attrs:
+            if attr == self.attribute: break
+            y += self.parentItem().attrsData[attr]['height']
+        y += self.parentItem().attrsData[self.attribute]['height']/2 + self.parentItem().baseHeight - config['node_radius'] - width/2
+
+        # y = (self.parentItem().baseHeight - config['node_radius'] +
+        #      self.parentItem().attrsData[self.attribute]['height'] / 4 +
+        #      self.parentItem().attrs.index(self.attribute) * self.parentItem().attrsData[self.attribute]['height'])
 
         rect = QtCore.QRectF(QtCore.QRect(x, y, width, height))
         return rect
@@ -1844,7 +1871,7 @@ class SocketItem(SlotItem):
         super(SocketItem, self).__init__(parent, attribute, preset, index, dataType, maxConnections)
 
         # Storage.
-        self.attributte = attribute
+        self.attribute = attribute
         self.preset = preset
         self.slotType = 'socket'
 
@@ -1866,15 +1893,18 @@ class SocketItem(SlotItem):
         The bounding rect based on the width and height variables.
 
         """
-        width = height = self.parentItem().attrHeight / 2.0
+        width = height = self.parentItem().slotWidth
 
         nodzInst = self.scene().views()[0]
         config = nodzInst.config
 
         x = - width / 2.0
-        y = (self.parentItem().baseHeight - config['node_radius'] +
-            (self.parentItem().attrHeight/4) +
-             self.parentItem().attrs.index(self.attribute) * self.parentItem().attrHeight )
+
+        y = 0
+        for attr in self.parentItem().attrs:
+            if attr == self.attribute: break
+            y += self.parentItem().attrsData[attr]['height']
+        y += self.parentItem().attrsData[self.attribute]['height']/2 + self.parentItem().baseHeight - config['node_radius'] - width/2
 
         rect = QtCore.QRectF(QtCore.QRect(x, y, width, height))
         return rect
