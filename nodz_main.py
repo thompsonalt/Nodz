@@ -1143,7 +1143,6 @@ class NodeItem(QtWidgets.QGraphicsItem):
         self.setAcceptHoverEvents(True)
         self.setFlag(QtWidgets.QGraphicsItem.ItemIsMovable)
         self.setFlag(QtWidgets.QGraphicsItem.ItemIsSelectable)
-        self.setFlag(QtWidgets.QGraphicsItem.ItemIsFocusable)
 
         # Dimensions.
         self.baseWidth  = config['node_width']
